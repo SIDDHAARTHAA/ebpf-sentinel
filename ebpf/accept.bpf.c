@@ -126,6 +126,25 @@ static __always_inline int submit_ipv6_event(__s32 ret, struct accept_args *args
     return 0;
 }
 
+static __always_inline int submit_unknown_event(__s32 ret)
+{
+    struct accept_event *event;
+    __u64 id = bpf_get_current_pid_tgid();
+
+    event = bpf_ringbuf_reserve(&accept_events, sizeof(*event), 0);
+    if (!event) {
+        return 0;
+    }
+
+    __builtin_memset(event, 0, sizeof(*event));
+    event->pid = id >> 32;
+    event->fd = ret;
+    bpf_get_current_comm(event->comm, sizeof(event->comm));
+
+    bpf_ringbuf_submit(event, 0);
+    return 0;
+}
+
 SEC("kretprobe/accept4_exit")
 int BPF_KRETPROBE(trace_accept4_exit, int ret)
 {
@@ -143,6 +162,7 @@ int BPF_KRETPROBE(trace_accept4_exit, int ret)
     }
 
     if (bpf_probe_read_user(&family, sizeof(family), (void *)args->sockaddr_ptr) < 0) {
+        submit_unknown_event(ret);
         goto cleanup;
     }
 
@@ -150,6 +170,8 @@ int BPF_KRETPROBE(trace_accept4_exit, int ret)
         submit_ipv4_event(ret, args);
     } else if (family == AF_INET6) {
         submit_ipv6_event(ret, args);
+    } else {
+        submit_unknown_event(ret);
     }
 
 cleanup:
