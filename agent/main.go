@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/siddhaarthaa/ebpf-sentinel/agent/flow"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/tracer"
 )
 
@@ -23,11 +25,15 @@ func main() {
 	acceptEvents := make(chan tracer.AcceptEvent, 128)
 	connectEvents := make(chan tracer.ConnectEvent, 128)
 	execEvents := make(chan tracer.ExecEvent, 128)
-	errCh := make(chan tracerResult, 3)
+	ioEvents := make(chan tracer.IOEvent, 256)
+	errCh := make(chan tracerResult, 4)
+	flowTracker := flow.NewFlowTracker(30 * time.Second)
 
 	go runAcceptTracer(ctx, acceptEvents, errCh)
 	go runConnectTracer(ctx, connectEvents, errCh)
 	go runExecTracer(ctx, execEvents, errCh)
+	go runWriteTracer(ctx, ioEvents, errCh)
+	go flowTracker.RunEvicter(ctx)
 
 	for {
 		select {
@@ -44,6 +50,10 @@ func main() {
 			printConnectEvent(event)
 		case event := <-execEvents:
 			printExecEvent(event)
+		case event := <-ioEvents:
+			if httpFlow := flowTracker.HandleIOEvent(event); httpFlow != nil {
+				printHTTPFlow(*httpFlow)
+			}
 		}
 	}
 }
@@ -61,6 +71,11 @@ func runConnectTracer(ctx context.Context, events chan<- tracer.ConnectEvent, er
 // runExecTracer starts the exec tracer and reports its exit status.
 func runExecTracer(ctx context.Context, events chan<- tracer.ExecEvent, errCh chan<- tracerResult) {
 	errCh <- tracerResult{name: "exec", err: tracer.RunExec(ctx, events)}
+}
+
+// runWriteTracer starts the IO tracer and reports its exit status.
+func runWriteTracer(ctx context.Context, events chan<- tracer.IOEvent, errCh chan<- tracerResult) {
+	errCh <- tracerResult{name: "io", err: tracer.RunWrite(ctx, events)}
 }
 
 // printAcceptEvent renders an accepted inbound connection event.
@@ -94,5 +109,19 @@ func printExecEvent(event tracer.ExecEvent) {
 		event.PID,
 		event.PPID,
 		event.Command(),
+	)
+}
+
+// printHTTPFlow renders a reconstructed HTTP request-response flow.
+func printHTTPFlow(httpFlow flow.HTTPFlow) {
+	fmt.Printf(
+		"[FLOW] pid=%d comm=%s fd=%d %s %s status=%d duration=%s\n",
+		httpFlow.PID,
+		httpFlow.Comm,
+		httpFlow.FD,
+		httpFlow.Method,
+		httpFlow.Path,
+		httpFlow.StatusCode,
+		httpFlow.Duration.Round(time.Millisecond),
 	)
 }
