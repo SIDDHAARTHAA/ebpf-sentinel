@@ -51,12 +51,6 @@ func RunAccept(ctx context.Context, sink chan<- AcceptEvent) error {
 	}
 	defer objs.Close()
 
-	entryLink, entrySymbol, err := attachKprobe(objs.TraceAccept4Enter, accept4Symbols())
-	if err != nil {
-		return fmt.Errorf("attach accept entry probe: %w", err)
-	}
-	defer entryLink.Close()
-
 	exitLink, exitSymbol, err := attachKretprobe(objs.TraceAccept4Exit, accept4Symbols())
 	if err != nil {
 		return fmt.Errorf("attach accept exit probe: %w", err)
@@ -71,7 +65,6 @@ func RunAccept(ctx context.Context, sink chan<- AcceptEvent) error {
 
 	go closeReaderOnDone(ctx, reader)
 
-	_ = entrySymbol
 	_ = exitSymbol
 
 	for {
