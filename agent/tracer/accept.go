@@ -9,8 +9,6 @@ import (
 	"net"
 	"strings"
 
-	"github.com/cilium/ebpf"
-	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 )
@@ -26,10 +24,12 @@ type AcceptEvent struct {
 	Comm   [16]byte
 }
 
+// Command returns the process name without trailing null bytes.
 func (e AcceptEvent) Command() string {
 	return strings.TrimRight(string(e.Comm[:]), "\x00")
 }
 
+// RemoteIP formats the captured peer address into a printable IP string.
 func (e AcceptEvent) RemoteIP() string {
 	switch e.Family {
 	case 2:
@@ -41,6 +41,7 @@ func (e AcceptEvent) RemoteIP() string {
 	}
 }
 
+// RunAccept loads the accept probe, reads events from the ring buffer, and forwards them.
 func RunAccept(ctx context.Context, sink chan<- AcceptEvent) error {
 	_ = rlimit.RemoveMemlock()
 
@@ -68,10 +69,7 @@ func RunAccept(ctx context.Context, sink chan<- AcceptEvent) error {
 	}
 	defer reader.Close()
 
-	go func() {
-		<-ctx.Done()
-		reader.Close()
-	}()
+	go closeReaderOnDone(ctx, reader)
 
 	_ = entrySymbol
 	_ = exitSymbol
@@ -98,6 +96,7 @@ func RunAccept(ctx context.Context, sink chan<- AcceptEvent) error {
 	}
 }
 
+// accept4Symbols lists the syscall symbols used for accept4 across common x86 kernels.
 func accept4Symbols() []string {
 	return []string{
 		"__x64_sys_accept4",
@@ -105,32 +104,4 @@ func accept4Symbols() []string {
 		"sys_accept4",
 		"__se_sys_accept4",
 	}
-}
-
-func attachKprobe(program *ebpf.Program, symbols []string) (link.Link, string, error) {
-	var errs []string
-
-	for _, symbol := range symbols {
-		kp, err := link.Kprobe(symbol, program, nil)
-		if err == nil {
-			return kp, symbol, nil
-		}
-		errs = append(errs, fmt.Sprintf("%s: %v", symbol, err))
-	}
-
-	return nil, "", fmt.Errorf("no usable kprobe symbol found (%s)", strings.Join(errs, "; "))
-}
-
-func attachKretprobe(program *ebpf.Program, symbols []string) (link.Link, string, error) {
-	var errs []string
-
-	for _, symbol := range symbols {
-		kp, err := link.Kretprobe(symbol, program, nil)
-		if err == nil {
-			return kp, symbol, nil
-		}
-		errs = append(errs, fmt.Sprintf("%s: %v", symbol, err))
-	}
-
-	return nil, "", fmt.Errorf("no usable kretprobe symbol found (%s)", strings.Join(errs, "; "))
 }

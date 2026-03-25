@@ -10,6 +10,6 @@ run: build
 	sudo ./bin/sentinel
 
 clean:
-	rm -f agent/tracer/accept_bpf*.go
-	rm -f agent/tracer/accept_bpf*.o
+	rm -f agent/tracer/*_bpf*.go
+	rm -f agent/tracer/*_bpf*.o
 	rm -f bin/sentinel
