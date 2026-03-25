@@ -1,0 +1,4 @@
+bin/
+agent/tracer/*_bpf*.go
+agent/tracer/*_bpf*.o
+.vscode/
