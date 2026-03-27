@@ -67,13 +67,15 @@ static __always_inline void fill_common_fields(struct sentinel_io_event *event, 
 static __always_inline int submit_write_event(__u32 fd, const void *buf, __u32 count)
 {
     struct sentinel_io_event *event;
-    __u32 copy_len = count;
+    __u32 copy_len;
 
     if (!buf || count == 0) {
         return 0;
     }
 
-    if (copy_len > HTTP_DATA_LEN) {
+    copy_len = count;
+    copy_len &= HTTP_DATA_LEN - 1;
+    if (count >= HTTP_DATA_LEN) {
         copy_len = HTTP_DATA_LEN;
     }
 
@@ -98,14 +100,31 @@ static __always_inline int submit_write_event(__u32 fd, const void *buf, __u32 c
 static __always_inline int submit_read_event(struct io_args *args, __s32 ret)
 {
     struct sentinel_io_event *event;
-    __u32 copy_len = ret;
+    __u32 copy_len;
+    __u32 read_len;
 
     if (!args->buf || ret <= 0) {
         return 0;
     }
 
-    if (copy_len > HTTP_DATA_LEN) {
+    copy_len = (__u32)ret;
+    copy_len &= HTTP_DATA_LEN - 1;
+    if ((__u32)ret >= HTTP_DATA_LEN) {
         copy_len = HTTP_DATA_LEN;
+    }
+
+    read_len = args->count;
+    if (read_len == 0) {
+        return 0;
+    }
+
+    read_len &= HTTP_DATA_LEN - 1;
+    if (args->count >= HTTP_DATA_LEN) {
+        read_len = HTTP_DATA_LEN;
+    }
+
+    if (copy_len > read_len) {
+        copy_len = read_len;
     }
 
     event = bpf_ringbuf_reserve(&io_events, sizeof(*event), 0);
@@ -115,7 +134,7 @@ static __always_inline int submit_read_event(struct io_args *args, __s32 ret)
     }
 
     fill_common_fields(event, args->fd, IO_OP_READ);
-    if (bpf_probe_read_user(event->data, copy_len, (const void *)args->buf) < 0) {
+    if (bpf_probe_read_user(event->data, read_len, (const void *)args->buf) < 0) {
         bpf_ringbuf_discard(event, 0);
         return 0;
     }
