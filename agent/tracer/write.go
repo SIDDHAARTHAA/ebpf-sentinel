@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
+	"golang.org/x/sys/unix"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 -cc clang -cflags "-O2 -g -Wall -D__TARGET_ARCH_x86 -I../../ebpf" Write ../../ebpf/write.bpf.c
@@ -18,6 +20,11 @@ import (
 const (
 	ioOpRead  = 1
 	ioOpWrite = 2
+)
+
+var (
+	ioTimestampBaseOnce sync.Once
+	ioTimestampBase     time.Time
 )
 
 type IOEvent struct {
@@ -57,7 +64,7 @@ func (e IOEvent) IsWrite() bool {
 
 // Timestamp converts the kernel monotonic timestamp into a Go time.Time surrogate.
 func (e IOEvent) Timestamp() time.Time {
-	return time.Unix(0, int64(e.TSNs))
+	return ioEventTimestampBase().Add(time.Duration(e.TSNs))
 }
 
 // RunWrite loads the IO probes, reads events from the ring buffer, and forwards them.
@@ -187,4 +194,25 @@ func recvfromSymbols() []string {
 		"sys_recvfrom",
 		"__se_sys_recvfrom",
 	}
+}
+
+// ioEventTimestampBase computes a wall-clock base that aligns kernel monotonic IO timestamps with real time.
+func ioEventTimestampBase() time.Time {
+	ioTimestampBaseOnce.Do(func() {
+		ioTimestampBase = estimateMonotonicWallClockBase()
+	})
+
+	return ioTimestampBase
+}
+
+// estimateMonotonicWallClockBase maps CLOCK_MONOTONIC nanoseconds onto the current wall clock.
+func estimateMonotonicWallClockBase() time.Time {
+	var ts unix.Timespec
+
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
+		return time.Now()
+	}
+
+	monotonicNow := time.Duration(ts.Nano())
+	return time.Now().Add(-monotonicNow)
 }
