@@ -12,7 +12,7 @@ services:
       - /proc:/host/proc:ro
       - /sys/kernel/debug:/sys/kernel/debug
       - /sys/fs/bpf:/sys/fs/bpf
-      - ../profiles:/etc/sentinel/profiles:ro
+      - ../profiles:/etc/sentinel/profiles:ro,Z
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4317
       PROMETHEUS_PORT: "9090"
@@ -32,7 +32,7 @@ services:
     ports:
       - "9091:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
