@@ -1,0 +1,14 @@
+profiles:
+  nginx:
+    expected_subnets: ["10.0.0.0/8", "172.16.0.0/12"]
+    allow_exec: false
+    alert_on_unknown_dest: true
+
+  node:
+    expected_subnets: ["10.0.0.0/8", "127.0.0.1/32"]
+    expected_ports: [5432, 6379, 8080]
+    allow_exec: false
+
+  postgres:
+    expected_subnets: ["127.0.0.1/32"]
+    allow_exec: false

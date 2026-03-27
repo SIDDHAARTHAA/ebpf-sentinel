@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/siddhaarthaa/ebpf-sentinel/agent/anomaly"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/flow"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/tracer"
 )
@@ -22,12 +23,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	profileSet, err := anomaly.LoadProfiles("profiles/default.yaml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sentinel (profiles): %v\n", err)
+		os.Exit(1)
+	}
+
 	acceptEvents := make(chan tracer.AcceptEvent, 128)
 	connectEvents := make(chan tracer.ConnectEvent, 128)
 	execEvents := make(chan tracer.ExecEvent, 128)
 	ioEvents := make(chan tracer.IOEvent, 256)
 	errCh := make(chan tracerResult, 4)
 	flowTracker := flow.NewFlowTracker(30 * time.Second)
+	detector := anomaly.NewDetector(profileSet)
 
 	go runAcceptTracer(ctx, acceptEvents, errCh)
 	go runConnectTracer(ctx, connectEvents, errCh)
@@ -45,10 +53,13 @@ func main() {
 				os.Exit(1)
 			}
 		case event := <-acceptEvents:
+			printAlerts(detector.HandleAccept(event))
 			printAcceptEvent(event)
 		case event := <-connectEvents:
+			printAlerts(detector.HandleConnect(event))
 			printConnectEvent(event)
 		case event := <-execEvents:
+			printAlerts(detector.HandleExec(event))
 			printExecEvent(event)
 		case event := <-ioEvents:
 			if httpFlow := flowTracker.HandleIOEvent(event); httpFlow != nil {
@@ -124,4 +135,17 @@ func printHTTPFlow(httpFlow flow.HTTPFlow) {
 		httpFlow.StatusCode,
 		httpFlow.Duration.Round(time.Millisecond),
 	)
+}
+
+// printAlerts renders anomaly alerts emitted by the detector.
+func printAlerts(alerts []anomaly.Alert) {
+	for _, alert := range alerts {
+		fmt.Printf(
+			"[ALERT] type=%s pid=%d comm=%s %s\n",
+			alert.Type,
+			alert.PID,
+			alert.Comm,
+			alert.Summary,
+		)
+	}
 }
