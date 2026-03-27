@@ -12,6 +12,8 @@ type Config struct {
 	PrometheusAddr string
 	OTLPEndpoint   string
 	ServiceName    string
+	HostProc       string
+	NodeName       string
 }
 
 // Load reads defaults, an optional config file, and environment overrides for the agent.
@@ -21,6 +23,8 @@ func Load() (Config, error) {
 		"PROMETHEUS_PORT":             "9090",
 		"OTEL_EXPORTER_OTLP_ENDPOINT": "",
 		"OTEL_SERVICE_NAME":           "ebpf-sentinel",
+		"HOST_PROC":                   "/proc",
+		"NODE_NAME":                   "",
 	}
 
 	if configPath := strings.TrimSpace(os.Getenv("SENTINEL_CONFIG_FILE")); configPath != "" {
@@ -44,6 +48,8 @@ func Load() (Config, error) {
 		PrometheusAddr: normalizePrometheusAddr(values["PROMETHEUS_PORT"]),
 		OTLPEndpoint:   strings.TrimSpace(values["OTEL_EXPORTER_OTLP_ENDPOINT"]),
 		ServiceName:    values["OTEL_SERVICE_NAME"],
+		HostProc:       strings.TrimSpace(values["HOST_PROC"]),
+		NodeName:       strings.TrimSpace(values["NODE_NAME"]),
 	}, nil
 }
 

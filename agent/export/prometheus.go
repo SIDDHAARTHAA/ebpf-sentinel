@@ -13,6 +13,7 @@ import (
 
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/anomaly"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/flow"
+	"github.com/siddhaarthaa/ebpf-sentinel/agent/k8s"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/tracer"
 )
 
@@ -40,14 +41,14 @@ func NewPrometheusExporter() *PrometheusExporter {
 				Name: "sentinel_accepted_connections_total",
 				Help: "Total accepted inbound connections seen by the sentinel.",
 			},
-			[]string{"comm", "namespace"},
+			[]string{"comm", "namespace", "pod"},
 		),
 		httpRequests: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "sentinel_http_requests_total",
 				Help: "Total completed HTTP requests reconstructed by the sentinel.",
 			},
-			[]string{"comm", "method", "status", "path"},
+			[]string{"comm", "method", "status", "path", "namespace", "pod"},
 		),
 		httpDurationSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -55,14 +56,14 @@ func NewPrometheusExporter() *PrometheusExporter {
 				Help:    "Latency of completed HTTP requests reconstructed by the sentinel.",
 				Buckets: prometheus.DefBuckets,
 			},
-			[]string{"comm", "method", "path"},
+			[]string{"comm", "method", "path", "namespace", "pod"},
 		),
 		anomalies: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "sentinel_anomalies_total",
 				Help: "Total anomaly alerts emitted by the sentinel.",
 			},
-			[]string{"comm", "type"},
+			[]string{"comm", "type", "namespace", "pod"},
 		),
 	}
 
@@ -93,21 +94,21 @@ func (e *PrometheusExporter) Run(ctx context.Context, addr string) error {
 }
 
 // ObserveAccept records an accepted connection against the Prometheus counters.
-func (e *PrometheusExporter) ObserveAccept(event tracer.AcceptEvent) {
-	e.acceptedConnections.WithLabelValues(event.Command(), "host").Inc()
+func (e *PrometheusExporter) ObserveAccept(event tracer.AcceptEvent, metadata k8s.ProcessMetadata) {
+	e.acceptedConnections.WithLabelValues(event.Command(), metadata.Namespace, metadata.PodName).Inc()
 }
 
 // ObserveHTTPFlow records a completed HTTP flow against request and latency metrics.
 func (e *PrometheusExporter) ObserveHTTPFlow(httpFlow flow.HTTPFlow) {
 	status := strconv.Itoa(httpFlow.StatusCode)
 
-	e.httpRequests.WithLabelValues(httpFlow.Comm, httpFlow.Method, status, httpFlow.Path).Inc()
-	e.httpDurationSeconds.WithLabelValues(httpFlow.Comm, httpFlow.Method, httpFlow.Path).Observe(httpFlow.Duration.Seconds())
+	e.httpRequests.WithLabelValues(httpFlow.Comm, httpFlow.Method, status, httpFlow.Path, httpFlow.Namespace, httpFlow.PodName).Inc()
+	e.httpDurationSeconds.WithLabelValues(httpFlow.Comm, httpFlow.Method, httpFlow.Path, httpFlow.Namespace, httpFlow.PodName).Observe(httpFlow.Duration.Seconds())
 }
 
 // ObserveAlert records an anomaly alert against the Prometheus counters.
-func (e *PrometheusExporter) ObserveAlert(alert anomaly.Alert) {
-	e.anomalies.WithLabelValues(alert.Comm, alert.Type).Inc()
+func (e *PrometheusExporter) ObserveAlert(alert anomaly.Alert, metadata k8s.ProcessMetadata) {
+	e.anomalies.WithLabelValues(alert.Comm, alert.Type, metadata.Namespace, metadata.PodName).Inc()
 }
 
 // newProbeMetricsCollector creates a collector that scrapes per-probe runtime metrics on demand.

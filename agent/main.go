@@ -12,6 +12,7 @@ import (
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/config"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/export"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/flow"
+	"github.com/siddhaarthaa/ebpf-sentinel/agent/k8s"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/tracer"
 )
 
@@ -45,6 +46,11 @@ func main() {
 	flowTracker := flow.NewFlowTracker(30 * time.Second)
 	detector := anomaly.NewDetector(profileSet)
 	metrics := export.NewPrometheusExporter()
+	resolver, err := k8s.NewResolver(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sentinel (resolver): %v\n", err)
+		os.Exit(1)
+	}
 	otlpExporter, err := export.NewOTLPExporter(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sentinel (otlp): %v\n", err)
@@ -69,21 +75,24 @@ func main() {
 				os.Exit(1)
 			}
 		case event := <-acceptEvents:
-			flowTracker.HandleAccept(event)
+			metadata := resolver.ResolvePID(event.PID)
+			flowTracker.HandleAccept(event, metadata)
 			alerts := detector.HandleAccept(event)
-			observeAlerts(metrics, alerts)
+			observeAlerts(metrics, alerts, metadata)
 			printAlerts(alerts)
-			metrics.ObserveAccept(event)
+			metrics.ObserveAccept(event, metadata)
 			printAcceptEvent(event)
 		case event := <-connectEvents:
-			flowTracker.HandleConnect(event)
+			metadata := resolver.ResolvePID(event.PID)
+			flowTracker.HandleConnect(event, metadata)
 			alerts := detector.HandleConnect(event)
-			observeAlerts(metrics, alerts)
+			observeAlerts(metrics, alerts, metadata)
 			printAlerts(alerts)
 			printConnectEvent(event)
 		case event := <-execEvents:
+			metadata := resolver.ResolvePID(event.PID)
 			alerts := detector.HandleExec(event)
-			observeAlerts(metrics, alerts)
+			observeAlerts(metrics, alerts, metadata)
 			printAlerts(alerts)
 			printExecEvent(event)
 		case event := <-ioEvents:
@@ -183,9 +192,9 @@ func printAlerts(alerts []anomaly.Alert) {
 }
 
 // observeAlerts records all emitted alerts in the Prometheus exporter.
-func observeAlerts(exporter *export.PrometheusExporter, alerts []anomaly.Alert) {
+func observeAlerts(exporter *export.PrometheusExporter, alerts []anomaly.Alert, metadata k8s.ProcessMetadata) {
 	for _, alert := range alerts {
-		exporter.ObserveAlert(alert)
+		exporter.ObserveAlert(alert, metadata)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/siddhaarthaa/ebpf-sentinel/agent/k8s"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/tracer"
 )
 
@@ -38,13 +39,13 @@ func NewFlowTracker(ttl time.Duration) *FlowTracker {
 }
 
 // HandleAccept stores metadata for an inbound connection so completed flows can be enriched later.
-func (t *FlowTracker) HandleAccept(event tracer.AcceptEvent) {
-	t.storeConnection(connectionFromAccept(event))
+func (t *FlowTracker) HandleAccept(event tracer.AcceptEvent, metadata k8s.ProcessMetadata) {
+	t.storeConnection(connectionFromAccept(event, metadata))
 }
 
 // HandleConnect stores metadata for an outbound connection so completed flows can be enriched later.
-func (t *FlowTracker) HandleConnect(event tracer.ConnectEvent) {
-	t.storeConnection(connectionFromConnect(event))
+func (t *FlowTracker) HandleConnect(event tracer.ConnectEvent, metadata k8s.ProcessMetadata) {
+	t.storeConnection(connectionFromConnect(event, metadata))
 }
 
 // RunEvicter periodically removes stale partial flows so the tracker does not grow forever.
@@ -124,18 +125,21 @@ func (t *FlowTracker) handleRead(event tracer.IOEvent) *HTTPFlow {
 	delete(t.partials, key)
 
 	return &HTTPFlow{
-		PID:        partial.Key.PID,
-		FD:         partial.Key.FD,
-		Comm:       partial.Connection.Comm,
-		Namespace:  partial.Connection.Namespace,
-		Method:     partial.Method,
-		Path:       partial.Path,
-		StatusCode: statusCode,
-		RemoteIP:   partial.Connection.RemoteIP,
-		RemotePort: partial.Connection.RemotePort,
-		StartedAt:  partial.StartedAt,
-		FinishedAt: now,
-		Duration:   now.Sub(partial.StartedAt),
+		PID:           partial.Key.PID,
+		FD:            partial.Key.FD,
+		Comm:          partial.Connection.Comm,
+		Namespace:     partial.Connection.Namespace,
+		PodName:       partial.Connection.PodName,
+		ContainerID:   partial.Connection.ContainerID,
+		ContainerName: partial.Connection.ContainerName,
+		Method:        partial.Method,
+		Path:          partial.Path,
+		StatusCode:    statusCode,
+		RemoteIP:      partial.Connection.RemoteIP,
+		RemotePort:    partial.Connection.RemotePort,
+		StartedAt:     partial.StartedAt,
+		FinishedAt:    now,
+		Duration:      now.Sub(partial.StartedAt),
 	}
 }
 
@@ -230,32 +234,38 @@ func firstLine(payload []byte) string {
 }
 
 // connectionFromAccept converts an accept event into reusable connection metadata.
-func connectionFromAccept(event tracer.AcceptEvent) Connection {
+func connectionFromAccept(event tracer.AcceptEvent, metadata k8s.ProcessMetadata) Connection {
 	now := time.Now()
 
 	return Connection{
-		Key:        ConnectionKey{PID: event.PID, FD: event.FD},
-		Comm:       event.Command(),
-		Namespace:  "host",
-		RemoteIP:   event.RemoteIP(),
-		RemotePort: event.Port,
-		LastSeen:   now,
-		Direction:  "inbound",
+		Key:           ConnectionKey{PID: event.PID, FD: event.FD},
+		Comm:          event.Command(),
+		Namespace:     metadata.Namespace,
+		PodName:       metadata.PodName,
+		ContainerID:   metadata.ContainerID,
+		ContainerName: metadata.ContainerName,
+		RemoteIP:      event.RemoteIP(),
+		RemotePort:    event.Port,
+		LastSeen:      now,
+		Direction:     "inbound",
 	}
 }
 
 // connectionFromConnect converts a connect event into reusable connection metadata.
-func connectionFromConnect(event tracer.ConnectEvent) Connection {
+func connectionFromConnect(event tracer.ConnectEvent, metadata k8s.ProcessMetadata) Connection {
 	now := time.Now()
 
 	return Connection{
-		Key:        ConnectionKey{PID: event.PID, FD: event.FD},
-		Comm:       event.Command(),
-		Namespace:  "host",
-		RemoteIP:   event.RemoteIP(),
-		RemotePort: event.Port,
-		LastSeen:   now,
-		Direction:  "outbound",
+		Key:           ConnectionKey{PID: event.PID, FD: event.FD},
+		Comm:          event.Command(),
+		Namespace:     metadata.Namespace,
+		PodName:       metadata.PodName,
+		ContainerID:   metadata.ContainerID,
+		ContainerName: metadata.ContainerName,
+		RemoteIP:      event.RemoteIP(),
+		RemotePort:    event.Port,
+		LastSeen:      now,
+		Direction:     "outbound",
 	}
 }
 
@@ -265,6 +275,7 @@ func defaultConnectionForEvent(event tracer.IOEvent, now time.Time) Connection {
 		Key:        ConnectionKey{PID: event.PID, FD: event.FD},
 		Comm:       event.Command(),
 		Namespace:  "host",
+		PodName:    "host",
 		RemoteIP:   "unknown",
 		RemotePort: 0,
 		LastSeen:   now,

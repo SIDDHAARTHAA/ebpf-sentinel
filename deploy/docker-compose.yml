@@ -9,6 +9,7 @@ services:
     depends_on:
       - jaeger
     volumes:
+      - /proc:/host/proc:ro
       - /sys/kernel/debug:/sys/kernel/debug
       - /sys/fs/bpf:/sys/fs/bpf
       - ../profiles:/etc/sentinel/profiles:ro
@@ -16,6 +17,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4317
       PROMETHEUS_PORT: "9090"
       SENTINEL_PROFILE_PATH: /etc/sentinel/profiles/default.yaml
+      HOST_PROC: /host/proc
 
   jaeger:
     image: jaegertracing/all-in-one:latest

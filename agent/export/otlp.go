@@ -86,6 +86,10 @@ func (e *OTLPExporter) ExportHTTPFlow(httpFlow flow.HTTPFlow) {
 		attribute.Int("net.peer.port", int(httpFlow.RemotePort)),
 		attribute.Int("process.pid", int(httpFlow.PID)),
 		attribute.String("process.executable.name", httpFlow.Comm),
+		attribute.String("container.id", httpFlow.ContainerID),
+		attribute.String("k8s.pod.name", httpFlow.PodName),
+		attribute.String("k8s.namespace.name", httpFlow.Namespace),
+		attribute.String("k8s.container.name", httpFlow.ContainerName),
 		attribute.String("sentinel.source", "ebpf"),
 	)
 

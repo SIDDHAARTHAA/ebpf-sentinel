@@ -8,13 +8,16 @@ type ConnectionKey struct {
 }
 
 type Connection struct {
-	Key        ConnectionKey
-	Comm       string
-	Namespace  string
-	RemoteIP   string
-	RemotePort uint16
-	LastSeen   time.Time
-	Direction  string
+	Key           ConnectionKey
+	Comm          string
+	Namespace     string
+	PodName       string
+	ContainerID   string
+	ContainerName string
+	RemoteIP      string
+	RemotePort    uint16
+	LastSeen      time.Time
+	Direction     string
 }
 
 type PartialFlow struct {
@@ -27,16 +30,19 @@ type PartialFlow struct {
 }
 
 type HTTPFlow struct {
-	PID        uint32
-	FD         uint32
-	Comm       string
-	Namespace  string
-	Method     string
-	Path       string
-	StatusCode int
-	RemoteIP   string
-	RemotePort uint16
-	StartedAt  time.Time
-	FinishedAt time.Time
-	Duration   time.Duration
+	PID           uint32
+	FD            uint32
+	Comm          string
+	Namespace     string
+	PodName       string
+	ContainerID   string
+	ContainerName string
+	Method        string
+	Path          string
+	StatusCode    int
+	RemoteIP      string
+	RemotePort    uint16
+	StartedAt     time.Time
+	FinishedAt    time.Time
+	Duration      time.Duration
 }
