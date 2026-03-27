@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ebpf-sentinel
+  namespace: ebpf-sentinel
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ebpf-sentinel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ebpf-sentinel
+    spec:
+      serviceAccountName: ebpf-sentinel
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: sentinel
+          image: ghcr.io/siddhaarthaa/ebpf-sentinel:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          env:
+            - name: HOST_PROC
+              value: /host/proc
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: SENTINEL_PROFILE_PATH
+              value: /etc/sentinel/profiles/default.yaml
+            - name: PROMETHEUS_PORT
+              value: "9090"
+          ports:
+            - name: metrics
+              containerPort: 9090
+              hostPort: 9090
+              protocol: TCP
+          volumeMounts:
+            - name: debugfs
+              mountPath: /sys/kernel/debug
+            - name: bpffs
+              mountPath: /sys/fs/bpf
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: profiles
+              mountPath: /etc/sentinel/profiles
+              readOnly: true
+      volumes:
+        - name: debugfs
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory
+        - name: bpffs
+          hostPath:
+            path: /sys/fs/bpf
+            type: Directory
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: profiles
+          configMap:
+            name: ebpf-sentinel-profiles
