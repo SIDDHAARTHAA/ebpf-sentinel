@@ -19,6 +19,27 @@ struct {
     __uint(max_entries, 1 << 24);
 } connect_events SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} connect_drop_stats SEC(".maps");
+
+/* increment_connect_drops records ring buffer reserve failures for the connect probe. */
+static __always_inline void increment_connect_drops(void)
+{
+    __u32 key = 0;
+    __u64 *value;
+
+    value = bpf_map_lookup_elem(&connect_drop_stats, &key);
+    if (!value) {
+        return;
+    }
+
+    __sync_fetch_and_add(value, 1);
+}
+
 /* submit_connect_ipv4_event emits a connect event when the destination is IPv4. */
 static __always_inline int submit_connect_ipv4_event(int sockfd, void *uservaddr, int addrlen)
 {
@@ -40,6 +61,7 @@ static __always_inline int submit_connect_ipv4_event(int sockfd, void *uservaddr
 
     event = bpf_ringbuf_reserve(&connect_events, sizeof(*event), 0);
     if (!event) {
+        increment_connect_drops();
         return 0;
     }
 
@@ -76,6 +98,7 @@ static __always_inline int submit_connect_ipv6_event(int sockfd, void *uservaddr
 
     event = bpf_ringbuf_reserve(&connect_events, sizeof(*event), 0);
     if (!event) {
+        increment_connect_drops();
         return 0;
     }
 
@@ -99,6 +122,7 @@ static __always_inline int submit_unknown_connect_event(int sockfd)
 
     event = bpf_ringbuf_reserve(&connect_events, sizeof(*event), 0);
     if (!event) {
+        increment_connect_drops();
         return 0;
     }
 

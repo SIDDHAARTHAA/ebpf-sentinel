@@ -29,6 +29,27 @@ struct {
     __uint(max_entries, 1 << 24);
 } io_events SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} io_drop_stats SEC(".maps");
+
+/* increment_io_drops records ring buffer reserve failures for the IO probe. */
+static __always_inline void increment_io_drops(void)
+{
+    __u32 key = 0;
+    __u64 *value;
+
+    value = bpf_map_lookup_elem(&io_drop_stats, &key);
+    if (!value) {
+        return;
+    }
+
+    __sync_fetch_and_add(value, 1);
+}
+
 /* fill_common_fields copies per-process metadata into an IO event. */
 static __always_inline void fill_common_fields(struct sentinel_io_event *event, __u32 fd, __u8 op)
 {
@@ -58,6 +79,7 @@ static __always_inline int submit_write_event(__u32 fd, const void *buf, __u32 c
 
     event = bpf_ringbuf_reserve(&io_events, sizeof(*event), 0);
     if (!event) {
+        increment_io_drops();
         return 0;
     }
 
@@ -88,6 +110,7 @@ static __always_inline int submit_read_event(struct io_args *args, __s32 ret)
 
     event = bpf_ringbuf_reserve(&io_events, sizeof(*event), 0);
     if (!event) {
+        increment_io_drops();
         return 0;
     }
 

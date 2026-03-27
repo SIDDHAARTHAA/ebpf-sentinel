@@ -48,6 +48,9 @@ func RunExec(ctx context.Context, sink chan<- ExecEvent) error {
 	}
 	defer reader.Close()
 
+	probeStats := registerProbeRuntime("exec")
+	probeStats.setRingbufCapacity(reader.BufferSize())
+	go pollDropCounter(ctx, probeStats, objs.ExecDropStats)
 	go closeReaderOnDone(ctx, reader)
 
 	for {
@@ -67,6 +70,9 @@ func RunExec(ctx context.Context, sink chan<- ExecEvent) error {
 		select {
 		case sink <- event:
 		case <-ctx.Done():
+			if total, err := lookupDropCounter(objs.ExecDropStats); err == nil {
+				probeStats.setEventsDroppedTotal(total)
+			}
 			return nil
 		}
 	}

@@ -112,6 +112,9 @@ func RunWrite(ctx context.Context, sink chan<- IOEvent) error {
 	}
 	defer reader.Close()
 
+	probeStats := registerProbeRuntime("io")
+	probeStats.setRingbufCapacity(reader.BufferSize())
+	go pollDropCounter(ctx, probeStats, objs.IoDropStats)
 	go closeReaderOnDone(ctx, reader)
 
 	_ = writeSymbol
@@ -138,6 +141,9 @@ func RunWrite(ctx context.Context, sink chan<- IOEvent) error {
 		select {
 		case sink <- event:
 		case <-ctx.Done():
+			if total, err := lookupDropCounter(objs.IoDropStats); err == nil {
+				probeStats.setEventsDroppedTotal(total)
+			}
 			return nil
 		}
 	}

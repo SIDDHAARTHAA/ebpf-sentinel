@@ -63,6 +63,9 @@ func RunAccept(ctx context.Context, sink chan<- AcceptEvent) error {
 	}
 	defer reader.Close()
 
+	probeStats := registerProbeRuntime("accept")
+	probeStats.setRingbufCapacity(reader.BufferSize())
+	go pollDropCounter(ctx, probeStats, objs.AcceptDropStats)
 	go closeReaderOnDone(ctx, reader)
 
 	_ = exitSymbol
@@ -84,6 +87,9 @@ func RunAccept(ctx context.Context, sink chan<- AcceptEvent) error {
 		select {
 		case sink <- event:
 		case <-ctx.Done():
+			if total, err := lookupDropCounter(objs.AcceptDropStats); err == nil {
+				probeStats.setEventsDroppedTotal(total)
+			}
 			return nil
 		}
 	}

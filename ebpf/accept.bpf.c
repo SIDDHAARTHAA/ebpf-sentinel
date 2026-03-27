@@ -20,6 +20,27 @@ struct {
     __uint(max_entries, 1 << 24);
 } accept_events SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} accept_drop_stats SEC(".maps");
+
+/* increment_accept_drops records ring buffer reserve failures for the accept probe. */
+static __always_inline void increment_accept_drops(void)
+{
+    __u32 key = 0;
+    __u64 *value;
+
+    value = bpf_map_lookup_elem(&accept_drop_stats, &key);
+    if (!value) {
+        return;
+    }
+
+    __sync_fetch_and_add(value, 1);
+}
+
 /* fill_event_from_socket copies peer address details from a kernel socket into an event. */
 static __always_inline void fill_event_from_socket(struct accept_event *event, struct sock *sock)
 {
@@ -49,6 +70,7 @@ static __always_inline int submit_unknown_event(__s32 ret)
 
     event = bpf_ringbuf_reserve(&accept_events, sizeof(*event), 0);
     if (!event) {
+        increment_accept_drops();
         return 0;
     }
 
@@ -113,6 +135,7 @@ static __always_inline int submit_socket_event(__s32 ret)
 
     event = bpf_ringbuf_reserve(&accept_events, sizeof(*event), 0);
     if (!event) {
+        increment_accept_drops();
         return 0;
     }
 

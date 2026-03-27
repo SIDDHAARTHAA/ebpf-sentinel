@@ -22,17 +22,29 @@ var httpMethods = []string{
 }
 
 type FlowTracker struct {
-	mu       sync.Mutex
-	ttl      time.Duration
-	partials map[ConnectionKey]PartialFlow
+	mu          sync.Mutex
+	ttl         time.Duration
+	partials    map[ConnectionKey]PartialFlow
+	connections map[ConnectionKey]Connection
 }
 
 // NewFlowTracker creates the in-memory state used to match HTTP requests and responses.
 func NewFlowTracker(ttl time.Duration) *FlowTracker {
 	return &FlowTracker{
-		ttl:      ttl,
-		partials: make(map[ConnectionKey]PartialFlow),
+		ttl:         ttl,
+		partials:    make(map[ConnectionKey]PartialFlow),
+		connections: make(map[ConnectionKey]Connection),
 	}
+}
+
+// HandleAccept stores metadata for an inbound connection so completed flows can be enriched later.
+func (t *FlowTracker) HandleAccept(event tracer.AcceptEvent) {
+	t.storeConnection(connectionFromAccept(event))
+}
+
+// HandleConnect stores metadata for an outbound connection so completed flows can be enriched later.
+func (t *FlowTracker) HandleConnect(event tracer.ConnectEvent) {
+	t.storeConnection(connectionFromConnect(event))
 }
 
 // RunEvicter periodically removes stale partial flows so the tracker does not grow forever.
@@ -76,14 +88,16 @@ func (t *FlowTracker) handleWrite(event tracer.IOEvent) *HTTPFlow {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	connection := t.connectionForEvent(event, now)
+
 	// TODO: Handle requests whose headers span multiple write syscalls.
 	t.partials[key] = PartialFlow{
-		Key:       key,
-		Comm:      event.Command(),
-		Method:    method,
-		Path:      path,
-		StartedAt: now,
-		UpdatedAt: now,
+		Key:        key,
+		Connection: connection,
+		Method:     method,
+		Path:       path,
+		StartedAt:  now,
+		UpdatedAt:  now,
 	}
 
 	return nil
@@ -112,10 +126,13 @@ func (t *FlowTracker) handleRead(event tracer.IOEvent) *HTTPFlow {
 	return &HTTPFlow{
 		PID:        partial.Key.PID,
 		FD:         partial.Key.FD,
-		Comm:       partial.Comm,
+		Comm:       partial.Connection.Comm,
+		Namespace:  partial.Connection.Namespace,
 		Method:     partial.Method,
 		Path:       partial.Path,
 		StatusCode: statusCode,
+		RemoteIP:   partial.Connection.RemoteIP,
+		RemotePort: partial.Connection.RemotePort,
 		StartedAt:  partial.StartedAt,
 		FinishedAt: now,
 		Duration:   now.Sub(partial.StartedAt),
@@ -132,6 +149,34 @@ func (t *FlowTracker) evictOlderThan(cutoff time.Time) {
 			delete(t.partials, key)
 		}
 	}
+
+	for key, connection := range t.connections {
+		if connection.LastSeen.Before(cutoff) {
+			delete(t.connections, key)
+		}
+	}
+}
+
+// storeConnection caches per-fd metadata for later HTTP flow enrichment.
+func (t *FlowTracker) storeConnection(connection Connection) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.connections[connection.Key] = connection
+}
+
+// connectionForEvent finds the latest connection metadata for an IO event or synthesizes a fallback.
+func (t *FlowTracker) connectionForEvent(event tracer.IOEvent, now time.Time) Connection {
+	key := ConnectionKey{PID: event.PID, FD: event.FD}
+
+	connection, exists := t.connections[key]
+	if !exists {
+		return defaultConnectionForEvent(event, now)
+	}
+
+	connection.LastSeen = now
+	t.connections[key] = connection
+	return connection
 }
 
 // parseHTTPRequestLine extracts the method and path from the first HTTP request line.
@@ -182,4 +227,47 @@ func firstLine(payload []byte) string {
 
 	line, _, _ := bytes.Cut(payload, []byte("\n"))
 	return strings.TrimSpace(string(line))
+}
+
+// connectionFromAccept converts an accept event into reusable connection metadata.
+func connectionFromAccept(event tracer.AcceptEvent) Connection {
+	now := time.Now()
+
+	return Connection{
+		Key:        ConnectionKey{PID: event.PID, FD: event.FD},
+		Comm:       event.Command(),
+		Namespace:  "host",
+		RemoteIP:   event.RemoteIP(),
+		RemotePort: event.Port,
+		LastSeen:   now,
+		Direction:  "inbound",
+	}
+}
+
+// connectionFromConnect converts a connect event into reusable connection metadata.
+func connectionFromConnect(event tracer.ConnectEvent) Connection {
+	now := time.Now()
+
+	return Connection{
+		Key:        ConnectionKey{PID: event.PID, FD: event.FD},
+		Comm:       event.Command(),
+		Namespace:  "host",
+		RemoteIP:   event.RemoteIP(),
+		RemotePort: event.Port,
+		LastSeen:   now,
+		Direction:  "outbound",
+	}
+}
+
+// defaultConnectionForEvent synthesizes fallback connection metadata when no socket event was seen.
+func defaultConnectionForEvent(event tracer.IOEvent, now time.Time) Connection {
+	return Connection{
+		Key:        ConnectionKey{PID: event.PID, FD: event.FD},
+		Comm:       event.Command(),
+		Namespace:  "host",
+		RemoteIP:   "unknown",
+		RemotePort: 0,
+		LastSeen:   now,
+		Direction:  "unknown",
+	}
 }

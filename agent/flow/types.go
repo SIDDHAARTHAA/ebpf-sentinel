@@ -7,22 +7,35 @@ type ConnectionKey struct {
 	FD  uint32
 }
 
+type Connection struct {
+	Key        ConnectionKey
+	Comm       string
+	Namespace  string
+	RemoteIP   string
+	RemotePort uint16
+	LastSeen   time.Time
+	Direction  string
+}
+
 type PartialFlow struct {
-	Key       ConnectionKey
-	Comm      string
-	Method    string
-	Path      string
-	StartedAt time.Time
-	UpdatedAt time.Time
+	Key        ConnectionKey
+	Connection Connection
+	Method     string
+	Path       string
+	StartedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type HTTPFlow struct {
 	PID        uint32
 	FD         uint32
 	Comm       string
+	Namespace  string
 	Method     string
 	Path       string
 	StatusCode int
+	RemoteIP   string
+	RemotePort uint16
 	StartedAt  time.Time
 	FinishedAt time.Time
 	Duration   time.Duration

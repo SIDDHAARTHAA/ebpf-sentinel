@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/anomaly"
+	"github.com/siddhaarthaa/ebpf-sentinel/agent/config"
+	"github.com/siddhaarthaa/ebpf-sentinel/agent/export"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/flow"
 	"github.com/siddhaarthaa/ebpf-sentinel/agent/tracer"
 )
@@ -23,7 +25,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	profileSet, err := anomaly.LoadProfiles("profiles/default.yaml")
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sentinel (config): %v\n", err)
+		os.Exit(1)
+	}
+
+	profileSet, err := anomaly.LoadProfiles(cfg.ProfilePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sentinel (profiles): %v\n", err)
 		os.Exit(1)
@@ -33,10 +41,18 @@ func main() {
 	connectEvents := make(chan tracer.ConnectEvent, 128)
 	execEvents := make(chan tracer.ExecEvent, 128)
 	ioEvents := make(chan tracer.IOEvent, 256)
-	errCh := make(chan tracerResult, 4)
+	errCh := make(chan tracerResult, 5)
 	flowTracker := flow.NewFlowTracker(30 * time.Second)
 	detector := anomaly.NewDetector(profileSet)
+	metrics := export.NewPrometheusExporter()
+	otlpExporter, err := export.NewOTLPExporter(ctx, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sentinel (otlp): %v\n", err)
+		os.Exit(1)
+	}
+	defer shutdownOTLPExporter(otlpExporter)
 
+	go runPrometheusExporter(ctx, cfg.PrometheusAddr, metrics, errCh)
 	go runAcceptTracer(ctx, acceptEvents, errCh)
 	go runConnectTracer(ctx, connectEvents, errCh)
 	go runExecTracer(ctx, execEvents, errCh)
@@ -53,16 +69,27 @@ func main() {
 				os.Exit(1)
 			}
 		case event := <-acceptEvents:
-			printAlerts(detector.HandleAccept(event))
+			flowTracker.HandleAccept(event)
+			alerts := detector.HandleAccept(event)
+			observeAlerts(metrics, alerts)
+			printAlerts(alerts)
+			metrics.ObserveAccept(event)
 			printAcceptEvent(event)
 		case event := <-connectEvents:
-			printAlerts(detector.HandleConnect(event))
+			flowTracker.HandleConnect(event)
+			alerts := detector.HandleConnect(event)
+			observeAlerts(metrics, alerts)
+			printAlerts(alerts)
 			printConnectEvent(event)
 		case event := <-execEvents:
-			printAlerts(detector.HandleExec(event))
+			alerts := detector.HandleExec(event)
+			observeAlerts(metrics, alerts)
+			printAlerts(alerts)
 			printExecEvent(event)
 		case event := <-ioEvents:
 			if httpFlow := flowTracker.HandleIOEvent(event); httpFlow != nil {
+				metrics.ObserveHTTPFlow(*httpFlow)
+				otlpExporter.ExportHTTPFlow(*httpFlow)
 				printHTTPFlow(*httpFlow)
 			}
 		}
@@ -87,6 +114,11 @@ func runExecTracer(ctx context.Context, events chan<- tracer.ExecEvent, errCh ch
 // runWriteTracer starts the IO tracer and reports its exit status.
 func runWriteTracer(ctx context.Context, events chan<- tracer.IOEvent, errCh chan<- tracerResult) {
 	errCh <- tracerResult{name: "io", err: tracer.RunWrite(ctx, events)}
+}
+
+// runPrometheusExporter starts the Prometheus HTTP endpoint and reports its exit status.
+func runPrometheusExporter(ctx context.Context, addr string, exporter *export.PrometheusExporter, errCh chan<- tracerResult) {
+	errCh <- tracerResult{name: "prometheus", err: exporter.Run(ctx, addr)}
 }
 
 // printAcceptEvent renders an accepted inbound connection event.
@@ -147,5 +179,22 @@ func printAlerts(alerts []anomaly.Alert) {
 			alert.Comm,
 			alert.Summary,
 		)
+	}
+}
+
+// observeAlerts records all emitted alerts in the Prometheus exporter.
+func observeAlerts(exporter *export.PrometheusExporter, alerts []anomaly.Alert) {
+	for _, alert := range alerts {
+		exporter.ObserveAlert(alert)
+	}
+}
+
+// shutdownOTLPExporter flushes any buffered spans before the process exits.
+func shutdownOTLPExporter(exporter *export.OTLPExporter) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := exporter.Shutdown(shutdownCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "sentinel (otlp shutdown): %v\n", err)
 	}
 }

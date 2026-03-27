@@ -10,6 +10,27 @@ struct {
     __uint(max_entries, 1 << 24);
 } exec_events SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} exec_drop_stats SEC(".maps");
+
+/* increment_exec_drops records ring buffer reserve failures for the exec probe. */
+static __always_inline void increment_exec_drops(void)
+{
+    __u32 key = 0;
+    __u64 *value;
+
+    value = bpf_map_lookup_elem(&exec_drop_stats, &key);
+    if (!value) {
+        return;
+    }
+
+    __sync_fetch_and_add(value, 1);
+}
+
 /* trace_sched_process_exec emits process execution events with parent PID context. */
 SEC("tracepoint/sched/sched_process_exec")
 int trace_sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
@@ -19,6 +40,7 @@ int trace_sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
 
     event = bpf_ringbuf_reserve(&exec_events, sizeof(*event), 0);
     if (!event) {
+        increment_exec_drops();
         return 0;
     }
 

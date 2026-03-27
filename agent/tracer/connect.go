@@ -63,6 +63,9 @@ func RunConnect(ctx context.Context, sink chan<- ConnectEvent) error {
 	}
 	defer reader.Close()
 
+	probeStats := registerProbeRuntime("connect")
+	probeStats.setRingbufCapacity(reader.BufferSize())
+	go pollDropCounter(ctx, probeStats, objs.ConnectDropStats)
 	go closeReaderOnDone(ctx, reader)
 
 	_ = connectSymbol
@@ -84,6 +87,9 @@ func RunConnect(ctx context.Context, sink chan<- ConnectEvent) error {
 		select {
 		case sink <- event:
 		case <-ctx.Done():
+			if total, err := lookupDropCounter(objs.ConnectDropStats); err == nil {
+				probeStats.setEventsDroppedTotal(total)
+			}
 			return nil
 		}
 	}
